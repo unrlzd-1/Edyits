@@ -1,0 +1,338 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  MODERATOR
+  ADMIN
+}
+
+enum UploadStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FLAGGED
+  REMOVED
+}
+
+enum EditType {
+  REMASTER
+  REMIX
+  MASHUP
+  EXTENDED
+  CLEAN
+  REBUILD
+  COMPILATION_TRACKLIST
+  OTHER
+}
+
+enum ReportReason {
+  INAPPROPRIATE_CONTENT
+  SPAM
+  COPYRIGHT_DMCA
+  RAW_LEAK
+  HARASSMENT
+  OTHER
+}
+
+enum StrikeType {
+  WARNING
+  UPLOAD_BAN_7D
+  PERMANENT_BAN
+}
+
+model User {
+  id                String    @id @default(uuid())
+  email             String    @unique
+  username          String    @unique
+  name              String?
+  password          String?
+  image             String?
+  role              UserRole  @default(USER)
+  bio               String?   @db.Text
+  isBanned          Boolean   @default(false)
+  bannedUntil       DateTime?
+  uploadQuota       Int       @default(107374182400) // 100GB default
+  usedStorage       BigInt    @default(0)
+  emailVerified     DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  uploads           Upload[]
+  albums            Album[]
+  compilations      Compilation[]
+  comments          Comment[]
+  likes             Like[]
+  reportsMade       Report[]  @relation("ReportsMade")
+  reportsReceived   Report[]  @relation("ReportsReceived")
+  strikes           Strike[]
+  moderationLogs    ModerationLog[] @relation("ModeratedBy")
+  followers         Follow[]  @relation("Following")
+  following         Follow[]  @relation("Follower")
+}
+
+model Follow {
+  id          String   @id @default(uuid())
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+
+  follower    User     @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+}
+
+model Upload {
+  id                String       @id @default(uuid())
+  userId            String
+  title             String
+  description       String       @db.Text // Edit description - min 50 chars
+  editDescription   String       @db.Text
+  editType          EditType
+  era               String?
+  tags              String[]
+  status            UploadStatus @default(PENDING)
+  isApproved        Boolean      @default(false)
+  approvedAt        DateTime?
+  approvedBy        String?
+  
+  // File info
+  originalFileKey   String
+  originalFileName  String
+  originalFileSize  BigInt
+  mimeType          String
+  duration          Float?
+  
+  // Stream files (HLS)
+  hlsMasterKey      String?
+  hlsPlaylistUrl    String?
+  hlsDuration       Float?
+  
+  // Audio processing
+  waveformData      Json?
+  audioFingerprint  String?      @db.Text // fingerprint hash
+  fingerprintScore  Float?
+  isFingerprintChecked Boolean   @default(false)
+  
+  // Cover art
+  coverArtKey       String?
+  coverArtUrl       String?
+  
+  // Metadata
+  credits           Json?        // original producers, tools used etc
+  moderationNotes   String?      @db.Text
+  rejectedReason    String?      @db.Text
+  flaggedByFilter   Boolean      @default(false)
+  filterReason      String?
+  
+  // Stats
+  likesCount        Int          @default(0)
+  commentsCount     Int          @default(0)
+  playsCount        Int          @default(0)
+  
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  user              User         @relation(fields: [userId], references: [id])
+  comments          Comment[]
+  likes             Like[]
+  reports           Report[]
+  track             Track?
+}
+
+model Album {
+  id                String       @id @default(uuid())
+  userId            String
+  title             String
+  description       String       @db.Text
+  era               String?
+  credits           Json?
+  status            UploadStatus @default(PENDING)
+  isApproved        Boolean      @default(false)
+  approvedAt        DateTime?
+  approvedBy        String?
+  
+  // Cover art
+  coverArtKey       String?
+  coverArtUrl       String?
+  coverArt300Key    String?
+  coverArt600Key    String?
+  coverArt1200Key   String?
+  coverArtWebpKey   String?
+  
+  // Metadata
+  totalTracks       Int          @default(0)
+  totalDuration     Float        @default(0)
+  allowFLACDownload Boolean      @default(false)
+  moderationNotes   String?      @db.Text
+  rejectedReason    String?      @db.Text
+  
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  user              User         @relation(fields: [userId], references: [id])
+  tracks            Track[]
+  reports           Report[]
+}
+
+model Track {
+  id                String       @id @default(uuid())
+  albumId           String?
+  uploadId          String?      @unique
+  trackNumber       Int?
+  title             String
+  description       String       @db.Text
+  editDescription   String       @db.Text
+  editType          EditType
+  duration          Float?
+  status            UploadStatus @default(PENDING)
+  isApproved        Boolean      @default(false)
+  
+  // File info
+  originalFileKey   String?
+  originalFileName  String?
+  originalFileSize  BigInt?
+  mimeType          String?
+  
+  // HLS
+  hlsMasterKey      String?
+  waveformData      Json?
+  audioFingerprint  String?      @db.Text
+  isFingerprintChecked Boolean   @default(false)
+  
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  album             Album?       @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  upload            Upload?      @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+}
+
+model Compilation {
+  id                String       @id @default(uuid())
+  userId            String
+  title             String
+  description       String       @db.Text
+  era               String?
+  status            UploadStatus @default(PENDING)
+  isApproved        Boolean      @default(false)
+  coverArtKey       String?
+  coverArtUrl       String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  user              User         @relation(fields: [userId], references: [id])
+  items             CompilationItem[]
+  reports           Report[]
+}
+
+model CompilationItem {
+  id                String       @id @default(uuid())
+  compilationId     String
+  uploadId          String?
+  position          Int
+  note              String?      @db.Text
+  createdAt         DateTime     @default(now())
+
+  compilation       Compilation  @relation(fields: [compilationId], references: [id], onDelete: Cascade)
+}
+
+model Comment {
+  id                String       @id @default(uuid())
+  userId            String
+  uploadId          String?
+  albumId           String?
+  compilationId     String?
+  parentId          String?
+  content           String       @db.Text
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  deletedAt         DateTime?
+
+  user              User         @relation(fields: [userId], references: [id])
+  upload            Upload?      @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  parent            Comment?     @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies           Comment[]    @relation("CommentReplies")
+}
+
+model Like {
+  id                String       @id @default(uuid())
+  userId            String
+  uploadId          String?
+  albumId           String?
+  compilationId     String?
+  createdAt         DateTime     @default(now())
+
+  user              User         @relation(fields: [userId], references: [id])
+  upload            Upload?      @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, uploadId])
+  @@unique([userId, albumId])
+  @@unique([userId, compilationId])
+}
+
+model Report {
+  id                String       @id @default(uuid())
+  reporterId        String
+  reportedUserId    String?
+  uploadId          String?
+  albumId           String?
+  compilationId     String?
+  reason            ReportReason
+  details           String       @db.Text
+  status            String       @default("PENDING") // PENDING, REVIEWED, RESOLVED, DISMISSED
+  reviewedBy        String?
+  reviewedAt        DateTime?
+  resolution        String?      @db.Text
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  reporter          User         @relation("ReportsMade", fields: [reporterId], references: [id])
+  reportedUser      User?        @relation("ReportsReceived", fields: [reportedUserId], references: [id])
+  upload            Upload?      @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  album             Album?       @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  compilation       Compilation? @relation(fields: [compilationId], references: [id], onDelete: Cascade)
+}
+
+model Strike {
+  id                String       @id @default(uuid())
+  userId            String
+  type              StrikeType
+  reason            String       @db.Text
+  issuedBy          String
+  expiresAt         DateTime?
+  isActive          Boolean      @default(true)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  user              User         @relation(fields: [userId], references: [id])
+}
+
+model ModerationLog {
+  id                String       @id @default(uuid())
+  action            String       // APPROVE, REJECT, REMOVE, WARN, BAN, etc.
+  entityType        String       // UPLOAD, ALBUM, USER, REPORT
+  entityId          String
+  moderatorId       String
+  reason            String       @db.Text
+  metadata          Json?
+  createdAt         DateTime     @default(now())
+
+  moderator         User         @relation("ModeratedBy", fields: [moderatorId], references: [id])
+}
+
+model BlocklistEntry {
+  id                String       @id @default(uuid())
+  type              String       // FINGERPRINT, KEYWORD, TITLE
+  value             String       @db.Text
+  reason            String       @db.Text
+  addedBy           String
+  createdAt         DateTime     @default(now())
+}
